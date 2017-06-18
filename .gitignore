@@ -1,3 +1,10 @@
 TODO
 pfa
 *.py
+*.user
+*.includes
+*.defines
+*.creator
+*.files
+*.config
+*.o

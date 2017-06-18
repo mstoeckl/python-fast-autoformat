@@ -14,14 +14,15 @@ char classification_table[256];
  *   TOK_OBRACE is: any of ( { [
  *   TOK_CBRACE is: any of ] } )
  *   TOK_COMMENT is: a comment!
- *   TOK_OPERATOR is: * ^ | |= @= 
- *   TOK_EXP is: ** 
+ *   TOK_OPERATOR is: * ^ | |= @=
+ *   TOK_EXP is: **
  *   TOK_PM is: + -
- *   TOK_COMMOLON is: : , 
+ *   TOK_COMMOLON is: : ,
  * Note that all our token definitions are by left/right spacing action
  * For instance, TOK_OPERATOR unconditionally spaces left/right
- *               TOK_COMMOLON inserts a right space unless followed by TOK_CBRACE
- *               TOK_LABEL has no right gap relative to TOK_OBRACE 
+ *               TOK_COMMOLON inserts a right space unless followed by
+ * TOK_CBRACE
+ *               TOK_LABEL has no right gap relative to TOK_OBRACE
  *               TOK_EXP binds close on the left and on the right
  *               TOK_PM acts like TOK_OPERATOR, except when it binds right
  */
@@ -33,72 +34,117 @@ enum {
   TOK_CBRACE,
   TOK_COMMENT,
   TOK_OPERATOR,
-  TOK_COMMOLON
+  TOK_COMMOLON,
+  TOK_INBETWEEN,
+
 };
 
-int main(int argc, char** argv) {
-    char linebuf[BUFSIZE];
-    
-    FILE* file = fopen("test.py", "r");
-    int is_continuation = 0;
-    int inside_string = 0;
-    while (fgets(linebuf, sizeof(linebuf), file)) {
-        int llen = strlen(linebuf);
-        linebuf[llen-1] = '\0';
-        linebuf[llen] = '\0';
-        /* token-split the line with NULL characters; double NULL is eof */
-        
-        /* STATE MACHINE TOKENIZE */
-        char* cur = linebuf;
-        int leading_spaces = 0;
-        for (;cur[0] == ' ' || cur[0] == '\t';cur++) {
-           leading_spaces++;
-        }
-        
-        char tokbuf[BUFSIZE];
-        char* tokd = tokbuf;
-        
-        fprintf(stderr, "LSP: %d\n", leading_spaces);
-        for (;cur[0];cur++) {
-            /* STATE MACHINE GOES HERE */
-            if (cur[0] == '\t') {
-                cur[0] = ' ';
-            }
-            if (!inside_string && cur[0] == ' ' && cur[1] == ' ') {
-                continue;
-            }
-            /* SO: single space is a token boundary ... */
-            
-            
-            *tokd = *cur;
-            tokd++;
-            
-            
-            /* TODO: count leading space number */
-            
-          
-//             fprintf(stderr, "%d |%c|\n", cur, *cur); 
-        }
-        *tokd = '\0';
-        
-        if (!is_continuation) {
-          /* Introduce spaces to list */
-          char lsp[BUFSIZE];
-          memset(lsp, ' ', leading_spaces);
-          lsp[leading_spaces] = '\0';
-          printf("%s%s\n", lsp, tokbuf);
-          
-          
-          /* Line wrapping & printing, oh joy */
+int main(int argc, char **argv) {
+  char linebuf[BUFSIZE];
 
-        }
-        
-        /* test for line continuation; if so, put up a marker and join the lines */
-        
-        
-        
-//         printf("%s | %d\n", linebuf, llen); 
-        // use strncpy
+  FILE *file = fopen("test.py", "r");
+  int is_continuation = 0;
+  int inside_string = 0;
+  while (fgets(linebuf, sizeof(linebuf), file)) {
+    int llen = strlen(linebuf);
+    linebuf[llen - 1] = '\0';
+    linebuf[llen] = '\0';
+    /* token-split the line with NULL characters; double NULL is eof */
+
+    /* STATE MACHINE TOKENIZE */
+    char *cur = linebuf;
+    int leading_spaces = 0;
+    for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
+      leading_spaces++;
     }
-    
+
+    char tokbuf[BUFSIZE];
+    char *tokd = tokbuf;
+    int toks[BUFSIZE];
+
+    int proctok = TOK_INBETWEEN;
+    fprintf(stderr, "LSP: %d\n", leading_spaces);
+    for (; cur[0]; cur++) {
+      /* STATE MACHINE GOES HERE */
+      if (cur[0] == '\t') {
+        cur[0] = ' ';
+      }
+      if (!inside_string && cur[0] == ' ' && cur[1] == ' ') {
+        continue;
+      }
+      /* SO: single space is a token boundary ... */
+      char nxt = *cur;
+      int ignore = 0;
+      int tokfin = 0;
+      switch (proctok) {
+      case TOK_LABEL: {
+      } break;
+      case TOK_NUMBER: {
+          /* We don't care about the number itself, just that things stay numberish */
+          if ('0' <= nxt && nxt <= '9') {
+
+          } else if (nxt == '.') {
+
+          } else {
+              tokfin = 1;
+              proctok = TOK_INBETWEEN;
+              ignore = 1;
+              cur--;
+          }
+      } break;
+      case TOK_STRING: {
+      } break;
+      case TOK_OBRACE: {
+      } break;
+      case TOK_CBRACE: {
+      } break;
+      case TOK_COMMENT: {
+      } break;
+      case TOK_OPERATOR: {
+      } break;
+      case TOK_COMMOLON: {
+      } break;
+      case TOK_INBETWEEN: {
+//        if (nxt > 127) {
+//            proctok = TOK_LABEL;
+//        }
+        if ('0' <= nxt && nxt <= '9') {
+            proctok = TOK_NUMBER;
+        }
+        ignore = 1;
+      } break;
+      }
+
+      if (!ignore) {
+      *tokd = *cur;
+      tokd++;
+      }
+
+      if (tokfin)  {
+          *tokd = ' ';
+          ++tokd;
+      }
+
+
+      /* TODO: count leading space number */
+
+      //             fprintf(stderr, "%d |%c|\n", cur, *cur);
+    }
+    *tokd = '\0';
+
+    if (!is_continuation) {
+      /* Introduce spaces to list */
+      char lsp[BUFSIZE];
+      memset(lsp, ' ', leading_spaces);
+      lsp[leading_spaces] = '\0';
+      printf("%s%s\n", lsp, tokbuf);
+
+      /* Line wrapping & printing, oh joy */
+    }
+
+    /* test for line continuation; if so, put up a marker and join the lines */
+
+    //         printf("%s | %d\n", linebuf, llen);
+    // use strncpy
+  }
 }
