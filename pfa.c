@@ -30,6 +30,7 @@ enum {
   TOK_LABEL,
   TOK_NUMBER,
   TOK_STRING,
+  TOK_TRISTR,
   TOK_OBRACE,
   TOK_CBRACE,
   TOK_COMMENT,
@@ -49,6 +50,8 @@ const char *tok_to_string(int tok) {
     return "NUM";
   case TOK_STRING:
     return "STR";
+  case TOK_TRISTR:
+    return "TST";
   case TOK_OBRACE:
     return "OBR";
   case TOK_CBRACE:
@@ -100,40 +103,80 @@ int isoptype(char c) {
 
 void pyformat(FILE *file, FILE *out) {
   char linebuf[BUFSIZE];
+  const char *lbufend = &linebuf[BUFSIZE - 1];
+  char *lbufstart = linebuf;
 
+  char tokbuf[BUFSIZE];
+  int toks[BUFSIZE];
+  char *tokd = NULL;
+  int ntoks = 0;
+
+  char string_starter = '\0';
   int is_continuation = 0;
   int inside_string = 0;
-  int lbufstart = 0;
-  while (fgets(&linebuf[lbufstart], BUFSIZE - lbufstart, file)) {
-    if (!is_continuation) {
-      lbufstart = 0;
+  int leading_spaces = 0;
+  int ltok = TOK_INBETWEEN;
+  int neof = 0;
+  int was_last_empty = 0;
+  while (1) {
+    char *readct = fgets(lbufstart, lbufend - lbufstart, file);
+    if (!readct) {
+      if (!is_continuation || neof) {
+        break;
+      } else {
+        neof = 1;
+      }
     }
+
+    if (!is_continuation) {
+      ntoks = 0;
+      tokd = tokbuf;
+    }
+
     /* token-split the line with NULL characters; double NULL is eof */
 
     /* STATE MACHINE TOKENIZE */
-    char *cur = &linebuf[lbufstart];
-    int llen = strlen(cur);
-    cur[llen - 1] = '\0';
+    char *cur = lbufstart;
+    int llen = readct ? strlen(cur) : 0;
+    /* space char gives room for termination checks */
+    if (is_continuation && ltok == TOK_TRISTR) {
+      cur[llen - 1] = '\n';
+    } else {
+      cur[llen - 1] = ' ';
+    }
     cur[llen] = '\0';
-    //    lbufstart += llen;
-    //    cur += llen;
+    cur[llen + 1] = '\0';
 
-    int leading_spaces = 0;
-    for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
-      leading_spaces++;
+    if (!is_continuation) {
+      leading_spaces = 0;
+      for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
+        leading_spaces++;
+      }
+    } else {
+      for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
+      }
+    }
+    int rle = strlen(cur);
+    if (rle == 0) {
+      if (was_last_empty) {
+        is_continuation = 0;
+        continue;
+      }
+      was_last_empty = 1;
+    } else {
+      was_last_empty = 0;
     }
 
-    char tokbuf[BUFSIZE];
-    char *tokd = tokbuf;
-    int toks[BUFSIZE];
-    int ntoks = 0;
     int proctok = TOK_INBETWEEN;
-    //    fprintf(stderr, "LSP: %d\n", leading_spaces);
+    if (is_continuation && ltok == TOK_TRISTR) {
+      proctok = TOK_TRISTR;
+    }
+
     char *eolpos = &cur[strlen(cur) - 1];
-    char string_starter = '\0';
     char lopchar = '\0';
     int numlen = 0;
     int nstrescps = 0;
+    int nstrleads = 0;
     for (; cur[0]; cur++) {
       /* STATE MACHINE GOES HERE */
       if (cur[0] == '\t') {
@@ -179,14 +222,54 @@ void pyformat(FILE *file, FILE *out) {
       } break;
       case TOK_STRING: {
         /* The fun one */
-        if (nxt != string_starter ||
-            (nstrescps % 2 == 1 && nxt == string_starter)) {
+        int ffin = 0;
+        if (nxt == string_starter) {
+          nstrleads++;
+        } else {
+          if (nstrleads == 2) {
+            /* implicitly to the end */
+            ffin = 1;
+            cur--;
+            ignore = 1;
+          } else {
+            nstrleads = 0;
+          }
+        }
+        if (nstrleads == 3) {
+          proctok = TOK_TRISTR;
+          nstrleads = 0;
+          nstrescps = 0;
+        } else if (!ffin && nstrleads == 2) {
+          /* doubled */
+        } else if ((nxt != string_starter ||
+                    (nstrescps % 2 == 1 && nxt == string_starter)) &&
+                   !ffin) {
           if (nxt == '\\') {
             nstrescps++;
           } else {
             nstrescps = 0;
           }
         } else {
+          tokfin = 1;
+          proctok = TOK_INBETWEEN;
+        }
+      } break;
+      case TOK_TRISTR: {
+        /* Only entry this once we've been in TOK_STRING */
+        if (nxt == string_starter && nstrescps % 2 == 0) {
+          nstrleads++;
+        } else {
+          nstrleads = 0;
+        }
+        if ((nxt != string_starter ||
+             (nstrescps % 2 == 1 && nxt == string_starter))) {
+          if (nxt == '\\') {
+            nstrescps++;
+          } else {
+            nstrescps = 0;
+          }
+        }
+        if (nstrleads == 3) {
           tokfin = 1;
           proctok = TOK_INBETWEEN;
         }
@@ -239,6 +322,7 @@ void pyformat(FILE *file, FILE *out) {
           proctok = TOK_STRING;
           ignore = 0;
           nstrescps = 0;
+          nstrleads = 1;
         } else if (isoptype(nxt)) {
           lopchar = '\0';
           proctok = TOK_OPERATOR;
@@ -285,20 +369,23 @@ void pyformat(FILE *file, FILE *out) {
     *tokd = '\0';
 
     /* determine the next line shall continue this one */
-    if (toks[ntoks - 1] == TOK_LCONT) {
+    ltok = toks[ntoks - 1];
+    int ptok = ntoks > 2 ? toks[ntoks - 2] : TOK_INBETWEEN;
+    if (ltok == TOK_LCONT || (ptok == TOK_LCONT && ltok == TOK_INBETWEEN) ||
+        ltok == TOK_TRISTR) {
       is_continuation = 1;
     } else {
       is_continuation = 0;
     }
 
-    if (!is_continuation) {
+    if (!is_continuation || neof) {
       /* Introduce spaces to list */
       char lsp[BUFSIZE];
       memset(lsp, ' ', leading_spaces);
       lsp[leading_spaces] = '\0';
       //      fprintf(stderr, ">>%s\n", linebuf);
       //      fprintf(stderr, "<<%s%s\n", lsp, tokbuf);
-      //      fprintf(stderr, "%d", lbufstart);
+      //      fprintf(stderr, "%d", lbufstart - linebuf);
       //      for (int i = 0; i < ntoks; i++) {
       //        fprintf(stderr, " %s", tok_to_string(toks[i]));
       //      }
@@ -312,7 +399,9 @@ void pyformat(FILE *file, FILE *out) {
         int postok = toks[i + 1];
         int toklen = strlen(tokpos);
 
-        if (pretok == TOK_COMMENT) {
+        if (pretok == TOK_LCONT || pretok == TOK_INBETWEEN) {
+          /* ignore line breaks */
+        } else if (pretok == TOK_COMMENT) {
           char *eos = tokpos + toklen;
           char *sos = tokpos;
           while (*sos == ' ') {
@@ -329,7 +418,11 @@ void pyformat(FILE *file, FILE *out) {
         tokpos += toklen + 1;
 
         int space;
-        if (pretok == TOK_EXP || postok == TOK_EXP) {
+        if (pretok == TOK_LCONT) {
+          space = 0;
+        } else if (pretok == TOK_TRISTR && postok == TOK_TRISTR) {
+          space = 0;
+        } else if (pretok == TOK_EXP || postok == TOK_EXP) {
           space = 0;
         } else if (pretok == TOK_DOT || postok == TOK_DOT) {
           space = 0;
@@ -351,7 +444,9 @@ void pyformat(FILE *file, FILE *out) {
           fprintf(out, " ");
         }
       }
-      if (toks[ntoks - 1] == TOK_COMMENT) {
+      if (toks[ntoks - 1] == TOK_LCONT) {
+        /* ignore line breaks */
+      } else if (toks[ntoks - 1] == TOK_COMMENT) {
         char *eos = tokpos + strlen(tokpos);
         char *sos = tokpos;
         while (*sos == ' ') {
@@ -369,6 +464,12 @@ void pyformat(FILE *file, FILE *out) {
       } else {
         fprintf(out, "%s\n", tokpos);
       }
+    }
+    /* Append to prior buffer or not */
+    if (!is_continuation) {
+      lbufstart = linebuf;
+    } else {
+      lbufstart += llen - 0;
     }
   }
 }
