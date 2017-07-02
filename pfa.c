@@ -28,6 +28,7 @@ char classification_table[256];
  */
 enum {
   TOK_LABEL,
+  TOK_SPECIAL,
   TOK_NUMBER,
   TOK_STRING,
   TOK_TRISTR,
@@ -40,12 +41,15 @@ enum {
   TOK_INBETWEEN,
   TOK_LCONT,
   TOK_DOT,
+  TOK_UNARYOP,
 };
 
 const char *tok_to_string(int tok) {
   switch (tok) {
   case TOK_LABEL:
     return "LAB";
+  case TOK_SPECIAL:
+    return "SPC";
   case TOK_NUMBER:
     return "NUM";
   case TOK_STRING:
@@ -70,6 +74,8 @@ const char *tok_to_string(int tok) {
     return "LCO";
   case TOK_DOT:
     return "DOT";
+  case TOK_UNARYOP:
+    return "UNO";
   default:
     return "???";
   }
@@ -96,10 +102,14 @@ int isnumeric_lead(char c) {
 
 int isoptype(char c) {
   if (c == '=' || c == '+' || c == '-' || c == '@' || c == '|' || c == '^' ||
-      c == '&' || c == '*' || c == '/' || c == '<' || c == '>')
+      c == '&' || c == '*' || c == '/' || c == '<' || c == '>' || c == '!')
     return 1;
   return 0;
 }
+
+const char *specnames[] = {"if",     "then", "else",  "import",
+                           "except", "for",  "while", "return",
+                           "yield",  "from", "as",    NULL};
 
 void pyformat(FILE *file, FILE *out) {
   char linebuf[BUFSIZE];
@@ -109,6 +119,7 @@ void pyformat(FILE *file, FILE *out) {
   char tokbuf[BUFSIZE];
   int toks[BUFSIZE];
   char *tokd = NULL;
+  char *stokd = NULL;
   int ntoks = 0;
 
   char string_starter = '\0';
@@ -131,6 +142,7 @@ void pyformat(FILE *file, FILE *out) {
     if (!is_continuation) {
       ntoks = 0;
       tokd = tokbuf;
+      stokd = tokbuf;
     }
 
     /* token-split the line with NULL characters; double NULL is eof */
@@ -139,11 +151,7 @@ void pyformat(FILE *file, FILE *out) {
     char *cur = lbufstart;
     int llen = readct ? strlen(cur) : 0;
     /* space char gives room for termination checks */
-    if (is_continuation && ltok == TOK_TRISTR) {
-      cur[llen - 1] = '\n';
-    } else {
-      cur[llen - 1] = ' ';
-    }
+    cur[llen - 1] = '\n';
     cur[llen] = '\0';
     cur[llen + 1] = '\0';
 
@@ -191,8 +199,9 @@ void pyformat(FILE *file, FILE *out) {
       int tokfin = 0;
       int otok = proctok;
       switch (proctok) {
+      case TOK_SPECIAL:
       case TOK_LABEL: {
-        if (isalpha_lead(nxt)) {
+        if (isalpha_lead(nxt) || ('0' <= nxt && nxt <= '9')) {
 
         } else {
           tokfin = 1;
@@ -205,7 +214,7 @@ void pyformat(FILE *file, FILE *out) {
       case TOK_NUMBER: {
         /* We don't care about the number itself, just that things stay
          * numberish */
-        int isdot = (numlen == 1) && !isnumeric_lead(nxt);
+        int isdot = (numlen == 1) && cur[-1] == '.' && !isnumeric_lead(nxt);
         if (!isdot && isnumeric_lead(nxt)) {
         } else if (!isdot && (nxt == 'e' || nxt == 'x')) {
 
@@ -288,6 +297,7 @@ void pyformat(FILE *file, FILE *out) {
         /* do nothing because comment goes to EOL */
       } break;
       case TOK_EXP:
+      case TOK_UNARYOP:
       case TOK_OPERATOR: {
         /* Operator handles subtypes */
         if (lopchar == '\0' && isoptype(nxt)) {
@@ -296,6 +306,9 @@ void pyformat(FILE *file, FILE *out) {
         } else if (lopchar == '/' && nxt == '/') {
         } else if (nxt == '=') {
         } else {
+          if (lopchar == '-' || lopchar == '+' || lopchar == '*') {
+            otok = TOK_UNARYOP;
+          }
           tokfin = 1;
           proctok = TOK_INBETWEEN;
           ignore = 1;
@@ -355,14 +368,24 @@ void pyformat(FILE *file, FILE *out) {
         tokd++;
       }
 
-      if (cur == eolpos) {
+      if (cur == eolpos && otok != TOK_INBETWEEN) {
         tokfin = 1;
       }
 
       if (tokfin) {
         *tokd = '\0';
         ++tokd;
+        /* convert label to special if it's a word in a list we have */
+        if (otok == TOK_LABEL) {
+          for (const char **cc = &specnames[0]; *cc; ++cc) {
+            if (strcmp(*cc, stokd) == 0) {
+              otok = TOK_SPECIAL;
+              break;
+            }
+          }
+        }
         toks[ntoks] = otok;
+        stokd = tokd;
         ntoks++;
       }
     }
@@ -370,9 +393,7 @@ void pyformat(FILE *file, FILE *out) {
 
     /* determine the next line shall continue this one */
     ltok = toks[ntoks - 1];
-    int ptok = ntoks > 2 ? toks[ntoks - 2] : TOK_INBETWEEN;
-    if (ltok == TOK_LCONT || (ptok == TOK_LCONT && ltok == TOK_INBETWEEN) ||
-        ltok == TOK_TRISTR) {
+    if (ltok == TOK_LCONT || proctok == TOK_TRISTR) {
       is_continuation = 1;
     } else {
       is_continuation = 0;
@@ -395,11 +416,12 @@ void pyformat(FILE *file, FILE *out) {
       char *tokpos = tokbuf;
       fprintf(out, "%s", lsp);
       for (int i = 0; i < ntoks - 1; i++) {
+        int pptok = i > 0 ? toks[i - 1] : TOK_INBETWEEN;
         int pretok = toks[i];
         int postok = toks[i + 1];
         int toklen = strlen(tokpos);
 
-        if (pretok == TOK_LCONT || pretok == TOK_INBETWEEN) {
+        if (pretok == TOK_LCONT) {
           /* ignore line breaks */
         } else if (pretok == TOK_COMMENT) {
           char *eos = tokpos + toklen;
@@ -420,12 +442,29 @@ void pyformat(FILE *file, FILE *out) {
         int space;
         if (pretok == TOK_LCONT) {
           space = 0;
+        } else if (pretok == TOK_SPECIAL || postok == TOK_SPECIAL) {
+          space = 1;
         } else if (pretok == TOK_TRISTR && postok == TOK_TRISTR) {
           space = 0;
         } else if (pretok == TOK_EXP || postok == TOK_EXP) {
           space = 0;
         } else if (pretok == TOK_DOT || postok == TOK_DOT) {
           space = 0;
+        } else if (pretok == TOK_OPERATOR && postok == TOK_UNARYOP) {
+          space = 1;
+        } else if (pretok == TOK_LABEL && postok == TOK_UNARYOP) {
+          space = 1;
+        } else if (pretok == TOK_CBRACE && postok == TOK_UNARYOP) {
+          space = 1;
+        } else if (pretok == TOK_OBRACE && postok == TOK_UNARYOP) {
+          space = 0;
+        } else if (pretok == TOK_UNARYOP) {
+          if (pptok == TOK_OPERATOR || pptok == TOK_EXP ||
+              pptok == TOK_COMMOLON || pptok == TOK_OBRACE) {
+            space = 0;
+          } else {
+            space = 1;
+          }
         } else if (postok == TOK_COMMOLON) {
           space = 0;
         } else if (pretok == TOK_COMMOLON) {
