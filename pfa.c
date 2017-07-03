@@ -131,7 +131,6 @@ void pyformat(FILE *file, FILE *out) {
 
   char string_starter = '\0';
   int is_continuation = 0;
-  int inside_string = 0;
   int leading_spaces = 0;
   int ltok = TOK_INBETWEEN;
   int neof = 0;
@@ -170,11 +169,9 @@ void pyformat(FILE *file, FILE *out) {
         leading_spaces++;
       }
     } else {
-      for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
-      }
     }
     int rle = strlen(cur);
-    if (rle == 0) {
+    if (rle <= 1) {
       if (was_last_empty) {
         is_continuation = 0;
         continue;
@@ -199,6 +196,7 @@ void pyformat(FILE *file, FILE *out) {
       if (cur[0] == '\t') {
         cur[0] = ' ';
       }
+      int inside_string = proctok == TOK_STRING || proctok == TOK_TRISTR;
       if (!inside_string && cur[0] == ' ' && cur[1] == ' ') {
         continue;
       }
@@ -225,8 +223,8 @@ void pyformat(FILE *file, FILE *out) {
          * numberish */
         int isdot = (numlen == 1) && cur[-1] == '.' && !isnumeric_lead(nxt);
         if (!isdot && isnumeric_lead(nxt)) {
+        } else if (cur[-1] == 'e' && (nxt == '-' || nxt == '+')) {
         } else if (!isdot && (nxt == 'e' || nxt == 'x')) {
-
         } else {
           if (cur[-1] == '.' && numlen == 1)
             otok = TOK_DOT;
@@ -348,6 +346,8 @@ void pyformat(FILE *file, FILE *out) {
         ignore = 1;
         if (nxt == '#') {
           proctok = TOK_COMMENT;
+          /* nix the terminating newline */
+          lbufstart[llen - 1] = ' ';
         } else if (nxt == '"' || nxt == '\'') {
           string_starter = nxt;
           proctok = TOK_STRING;
@@ -417,9 +417,9 @@ void pyformat(FILE *file, FILE *out) {
     }
     *tokd = '\0';
 
-    /* determine the next line shall continue this one */
+    /* determine if the next line shall continue this one */
     ltok = toks[ntoks - 1];
-    if (ltok == TOK_LCONT || proctok == TOK_TRISTR) {
+    if (ltok == TOK_LCONT || proctok == TOK_TRISTR || nestings > 0) {
       is_continuation = 1;
     } else {
       is_continuation = 0;
@@ -460,7 +460,7 @@ void pyformat(FILE *file, FILE *out) {
             *eos = '\0';
             eos--;
           }
-          fprintf(out, "# %s", sos);
+          fprintf(out, "# %s !#", sos);
         } else {
           fprintf(out, "%s", tokpos);
         }
