@@ -35,8 +35,10 @@ enum {
   TOK_OBRACE,
   TOK_CBRACE,
   TOK_COMMENT,
+  TOK_EQUAL,
   TOK_OPERATOR,
-  TOK_COMMOLON,
+  TOK_COMMA,
+  TOK_COLON,
   TOK_EXP,
   TOK_INBETWEEN,
   TOK_LCONT,
@@ -64,10 +66,14 @@ const char *tok_to_string(int tok) {
     return "CMT";
   case TOK_OPERATOR:
     return "OPR";
+  case TOK_EQUAL:
+    return "EQL";
   case TOK_EXP:
     return "EXP";
-  case TOK_COMMOLON:
-    return "CLM";
+  case TOK_COLON:
+    return "CLN";
+  case TOK_COMMA:
+    return "CMA";
   case TOK_INBETWEEN:
     return "INB";
   case TOK_LCONT:
@@ -102,14 +108,15 @@ int isnumeric_lead(char c) {
 
 int isoptype(char c) {
   if (c == '=' || c == '+' || c == '-' || c == '@' || c == '|' || c == '^' ||
-      c == '&' || c == '*' || c == '/' || c == '<' || c == '>' || c == '!')
+      c == '&' || c == '*' || c == '/' || c == '<' || c == '>' || c == '!' ||
+      c == '~' || c == '%')
     return 1;
   return 0;
 }
 
-const char *specnames[] = {"if",     "then", "else",  "import",
-                           "except", "for",  "while", "return",
-                           "yield",  "from", "as",    NULL};
+const char *specnames[] = {"if",  "then",  "else",    "import", "except",
+                           "for", "while", "return",  "yield",  "from",
+                           "as",  "else",  "finally", NULL};
 
 void pyformat(FILE *file, FILE *out) {
   char linebuf[BUFSIZE];
@@ -129,6 +136,7 @@ void pyformat(FILE *file, FILE *out) {
   int ltok = TOK_INBETWEEN;
   int neof = 0;
   int was_last_empty = 0;
+  int nestings = 0;
   while (1) {
     char *readct = fgets(lbufstart, lbufend - lbufstart, file);
     if (!readct) {
@@ -143,6 +151,7 @@ void pyformat(FILE *file, FILE *out) {
       ntoks = 0;
       tokd = tokbuf;
       stokd = tokbuf;
+      nestings = 0;
     }
 
     /* token-split the line with NULL characters; double NULL is eof */
@@ -296,6 +305,7 @@ void pyformat(FILE *file, FILE *out) {
       case TOK_COMMENT: {
         /* do nothing because comment goes to EOL */
       } break;
+      case TOK_EQUAL:
       case TOK_EXP:
       case TOK_UNARYOP:
       case TOK_OPERATOR: {
@@ -309,6 +319,9 @@ void pyformat(FILE *file, FILE *out) {
           if (lopchar == '-' || lopchar == '+' || lopchar == '*') {
             otok = TOK_UNARYOP;
           }
+          if (lopchar == '=' && !isoptype(cur[-2])) {
+            otok = TOK_EQUAL;
+          }
           tokfin = 1;
           proctok = TOK_INBETWEEN;
           ignore = 1;
@@ -316,7 +329,12 @@ void pyformat(FILE *file, FILE *out) {
         }
         lopchar = nxt;
       } break;
-      case TOK_COMMOLON: {
+      case TOK_COMMA: {
+        /* Single character */
+        tokfin = 1;
+        proctok = TOK_INBETWEEN;
+      } break;
+      case TOK_COLON: {
         /* Single character */
         tokfin = 1;
         proctok = TOK_INBETWEEN;
@@ -340,8 +358,11 @@ void pyformat(FILE *file, FILE *out) {
           lopchar = '\0';
           proctok = TOK_OPERATOR;
           cur--;
-        } else if (nxt == ',' || nxt == ':') {
-          proctok = TOK_COMMOLON;
+        } else if (nxt == ',') {
+          proctok = TOK_COMMA;
+          cur--;
+        } else if (nxt == ':') {
+          proctok = TOK_COLON;
           cur--;
         } else if (nxt == '(' || nxt == '[' || nxt == '{') {
           proctok = TOK_OBRACE;
@@ -384,6 +405,11 @@ void pyformat(FILE *file, FILE *out) {
             }
           }
         }
+        if (otok == TOK_OBRACE) {
+          nestings++;
+        } else if (otok == TOK_CBRACE) {
+          nestings--;
+        }
         toks[ntoks] = otok;
         stokd = tokd;
         ntoks++;
@@ -415,6 +441,7 @@ void pyformat(FILE *file, FILE *out) {
       /* Line wrapping & printing, oh joy */
       char *tokpos = tokbuf;
       fprintf(out, "%s", lsp);
+      int nests = 0;
       for (int i = 0; i < ntoks - 1; i++) {
         int pptok = i > 0 ? toks[i - 1] : TOK_INBETWEEN;
         int pretok = toks[i];
@@ -442,7 +469,15 @@ void pyformat(FILE *file, FILE *out) {
         int space;
         if (pretok == TOK_LCONT) {
           space = 0;
-        } else if (pretok == TOK_SPECIAL || postok == TOK_SPECIAL) {
+        } else if (pretok == TOK_EQUAL || postok == TOK_EQUAL) {
+          space = nests == 0;
+        } else if (pretok == TOK_SPECIAL) {
+          if (postok == TOK_COLON) {
+            space = 0;
+          } else {
+            space = 1;
+          }
+        } else if (postok == TOK_SPECIAL) {
           space = 1;
         } else if (pretok == TOK_TRISTR && postok == TOK_TRISTR) {
           space = 0;
@@ -459,16 +494,26 @@ void pyformat(FILE *file, FILE *out) {
         } else if (pretok == TOK_OBRACE && postok == TOK_UNARYOP) {
           space = 0;
         } else if (pretok == TOK_UNARYOP) {
-          if (pptok == TOK_OPERATOR || pptok == TOK_EXP ||
-              pptok == TOK_COMMOLON || pptok == TOK_OBRACE) {
+          if (pptok == TOK_OPERATOR || pptok == TOK_EXP || pptok == TOK_COMMA ||
+              pptok == TOK_OBRACE || pptok == TOK_EQUAL || pptok == TOK_COLON) {
             space = 0;
           } else {
             space = 1;
           }
-        } else if (postok == TOK_COMMOLON) {
+        } else if (postok == TOK_COMMA || postok == TOK_COLON) {
           space = 0;
-        } else if (pretok == TOK_COMMOLON) {
-          space = 1;
+        } else if (pretok == TOK_COMMA) {
+          if (postok == TOK_CBRACE) {
+            space = 0;
+          } else {
+            space = 1;
+          }
+        } else if (pretok == TOK_COLON) {
+          if (pptok == TOK_LABEL || pptok == TOK_SPECIAL) {
+            space = 1;
+          } else {
+            space = 0;
+          }
         } else if (pretok == TOK_CBRACE && postok == TOK_LABEL) {
           space = 1;
         } else if (pretok == TOK_OPERATOR || postok == TOK_OPERATOR) {
@@ -481,6 +526,12 @@ void pyformat(FILE *file, FILE *out) {
         }
         if (space) {
           fprintf(out, " ");
+        }
+
+        if (pretok == TOK_OBRACE) {
+          nests++;
+        } else if (postok == TOK_CBRACE) {
+          nests--;
         }
       }
       if (toks[ntoks - 1] == TOK_LCONT) {
