@@ -1,6 +1,8 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+/* The maximum unwrapped line length. */
 #define BUFSIZE 4096
 
 /* Cast characters to the simplest equivalent character. Thus A -> a, 4 -> 0 */
@@ -182,8 +184,10 @@ void pyformat(FILE *file, FILE *out) {
     }
 
     int proctok = TOK_INBETWEEN;
-    if (is_continuation && ltok == TOK_TRISTR) {
+    if (is_continuation == 2) {
       proctok = TOK_TRISTR;
+      --ntoks;
+      --tokd;
     }
 
     char *eolpos = &cur[strlen(cur) - 1];
@@ -419,7 +423,9 @@ void pyformat(FILE *file, FILE *out) {
 
     /* determine if the next line shall continue this one */
     ltok = toks[ntoks - 1];
-    if (ltok == TOK_LCONT || proctok == TOK_TRISTR || nestings > 0) {
+    if (proctok == TOK_TRISTR) {
+      is_continuation = 2;
+    } else if (ltok == TOK_LCONT || nestings > 0) {
       is_continuation = 1;
     } else {
       is_continuation = 0;
@@ -435,6 +441,7 @@ void pyformat(FILE *file, FILE *out) {
       char laccum[BUFSIZE];
       int splitpoints[BUFSIZE];
       int split_ratings[BUFSIZE]; /* 0 is regular; -1 is force/cmt; 1 is weak */
+      int split_nestings[BUFSIZE];
       int nsplits = 0;
       char *buildpt = laccum;
       //      fprintf(stderr, ">>%s\n", linebuf);
@@ -470,11 +477,13 @@ void pyformat(FILE *file, FILE *out) {
           buildpt += sprintf(buildpt, "# %s !#", sos);
           splitpoints[nsplits] = buildpt - laccum;
           split_ratings[nsplits] = -1;
+          split_nestings[nsplits] = nests;
           nsplits++;
         } else {
           buildpt += sprintf(buildpt, "%s", tokpos);
           splitpoints[nsplits] = buildpt - laccum;
           split_ratings[nsplits] = 0;
+          split_nestings[nsplits] = nests;
           nsplits++;
         }
         tokpos += toklen + 1;
@@ -579,7 +588,7 @@ void pyformat(FILE *file, FILE *out) {
               prn = &tmp[1];
               nlen -= 1;
             }
-            if (force_split) {
+            if (force_split || split_nestings[i - 1] > 0) {
               fprintf(out, "\n    ");
             } else {
               fprintf(out, " \\\n    ");
@@ -602,8 +611,6 @@ void pyformat(FILE *file, FILE *out) {
     }
   }
 }
-
-#include "errno.h"
 
 int main(int argc, char **argv) {
   int inplace = 0;
@@ -630,25 +637,24 @@ int main(int argc, char **argv) {
     }
 
     FILE *out;
+    char buf[24];
+    strncpy(buf, ".pfa_XXXXXX", 23);
     if (inplace) {
       /* dump to tmp, then copy. Hope it's ram! */
-      out = tmpfile();
+      int fd = mkstemp(buf);
+      out = fdopen(fd, "w");
     } else {
       out = stdout;
     }
     pyformat(in, out);
     fclose(in);
     if (inplace) {
-      fflush(out);
-      rewind(out);
-      FILE *over = fopen(name, "w");
-      char buf[BUFSIZE];
-      int len;
-      while ((len = fread(buf, 1, BUFSIZE, out))) {
-        fwrite(buf, 1, len, over);
-      }
-      fclose(over);
       fclose(out);
+      int s = rename(buf, name);
+      if (s) {
+        fprintf(stderr, "Failed to overwrite %s with %s\n", name, buf);
+        remove(buf);
+      }
     }
   }
 }
