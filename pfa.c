@@ -165,7 +165,7 @@ void pyformat(FILE *file, FILE *out) {
 
     if (!is_continuation) {
       leading_spaces = 0;
-      for (; cur[0] == ' ' || cur[0] == '\t'; cur++) {
+      for (; cur[0] == '\n' || cur[0] == ' ' || cur[0] == '\t'; cur++) {
         leading_spaces++;
       }
     } else {
@@ -425,11 +425,18 @@ void pyformat(FILE *file, FILE *out) {
       is_continuation = 0;
     }
 
-    if (!is_continuation || neof) {
+    if (was_last_empty) {
+      fprintf(out, "\n");
+    } else if (!is_continuation || neof) {
       /* Introduce spaces to list */
       char lsp[BUFSIZE];
       memset(lsp, ' ', leading_spaces);
       lsp[leading_spaces] = '\0';
+      char laccum[BUFSIZE];
+      int splitpoints[BUFSIZE];
+      int split_ratings[BUFSIZE]; /* 0 is regular; -1 is force/cmt; 1 is weak */
+      int nsplits = 0;
+      char *buildpt = laccum;
       //      fprintf(stderr, ">>%s\n", linebuf);
       //      fprintf(stderr, "<<%s%s\n", lsp, tokbuf);
       //      fprintf(stderr, "%d", lbufstart - linebuf);
@@ -440,9 +447,9 @@ void pyformat(FILE *file, FILE *out) {
 
       /* Line wrapping & printing, oh joy */
       char *tokpos = tokbuf;
-      fprintf(out, "%s", lsp);
+      //      buildpt += sprintf(buildpt, "%s", lsp);
       int nests = 0;
-      for (int i = 0; i < ntoks - 1; i++) {
+      for (int i = 0; i < ntoks; i++) {
         int pptok = i > 0 ? toks[i - 1] : TOK_INBETWEEN;
         int pretok = toks[i];
         int postok = toks[i + 1];
@@ -460,9 +467,15 @@ void pyformat(FILE *file, FILE *out) {
             *eos = '\0';
             eos--;
           }
-          fprintf(out, "# %s !#", sos);
+          buildpt += sprintf(buildpt, "# %s !#", sos);
+          splitpoints[nsplits] = buildpt - laccum;
+          split_ratings[nsplits] = -1;
+          nsplits++;
         } else {
-          fprintf(out, "%s", tokpos);
+          buildpt += sprintf(buildpt, "%s", tokpos);
+          splitpoints[nsplits] = buildpt - laccum;
+          split_ratings[nsplits] = 0;
+          nsplits++;
         }
         tokpos += toklen + 1;
 
@@ -524,8 +537,8 @@ void pyformat(FILE *file, FILE *out) {
         } else {
           space = 1;
         }
-        if (space) {
-          fprintf(out, " ");
+        if (space && i < ntoks - 1) {
+          buildpt += sprintf(buildpt, " ");
         }
 
         if (pretok == TOK_OBRACE) {
@@ -534,32 +547,58 @@ void pyformat(FILE *file, FILE *out) {
           nests--;
         }
       }
-      if (toks[ntoks - 1] == TOK_LCONT) {
-        /* ignore line breaks */
-      } else if (toks[ntoks - 1] == TOK_COMMENT) {
-        char *eos = tokpos + strlen(tokpos);
-        char *sos = tokpos;
-        while (*sos == ' ') {
-          sos++;
+      int eoff = buildpt - laccum;
+
+      /* the art of line breaking */
+
+      /* TODO: create a 'nesting depth' field */
+      char tmp[BUFSIZE];
+      int length_left = 80 - leading_spaces;
+      int first = 1;
+      fprintf(out, "%s", lsp);
+      if (nsplits > 0) {
+        for (int i = 0; i < nsplits; i++) {
+          int fr = i > 0 ? splitpoints[i - 1] : 0;
+          int to = i >= nsplits - 1 ? eoff : splitpoints[i];
+          memcpy(tmp, &laccum[fr], to - fr);
+          tmp[to - fr] = '\0';
+          if (split_ratings[i] < 0) {
+            to -= 2;
+            tmp[to - fr] = '\0';
+          }
+          int nlen = to - fr;
+          int force_split = i > 0 ? split_ratings[i - 1] < 0 : 0;
+
+          if ((nlen < length_left || first) && !force_split) {
+            first = 0;
+            length_left -= nlen;
+            fprintf(out, "%s", tmp);
+          } else {
+            char *prn = &tmp[0];
+            if (tmp[0] == ' ') {
+              prn = &tmp[1];
+              nlen -= 1;
+            }
+            if (force_split) {
+              fprintf(out, "\n    ");
+            } else {
+              fprintf(out, " \\\n    ");
+            }
+            length_left = 80 - leading_spaces - 4 - nlen;
+            fprintf(out, "%s%s", lsp, prn);
+            first = 1;
+          }
         }
-        while (*eos == ' ') {
-          *eos = '\0';
-          eos--;
-        }
-        if (sos[0] == '!') {
-          fprintf(out, "#%s\n", sos);
-        } else {
-          fprintf(out, "# %s\n", sos);
-        }
+        fprintf(out, "\n");
       } else {
-        fprintf(out, "%s\n", tokpos);
+        fprintf(out, "%s\n", laccum);
       }
     }
     /* Append to prior buffer or not */
     if (!is_continuation) {
       lbufstart = linebuf;
     } else {
-      lbufstart += llen - 0;
+      lbufstart += llen - -1;
     }
   }
 }
