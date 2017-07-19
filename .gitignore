@@ -1,5 +1,6 @@
 TODO
 pfa
+pfai
 *.py
 *.user
 *.includes
@@ -8,3 +9,4 @@ pfa
 *.files
 *.config
 *.o
+*.out.*

@@ -603,22 +603,52 @@ void pyformat(FILE *file, FILE *out) {
   }
 }
 
+#include "errno.h"
+
 int main(int argc, char **argv) {
+  int inplace = 0;
+  if (argv[0][strlen(argv[0]) - 1] == 'i') {
+    inplace = 1;
+  }
 
   if (argc == 1) {
-    fprintf(stderr, "Usage: ./pfa [files]\n");
+    if (inplace) {
+      fprintf(stderr, "Usage: pfai [files]\n");
+      fprintf(stderr, "       (to stdout) pfa [files]\n");
+    } else {
+      fprintf(stderr, "Usage: pfa [files]\n");
+      fprintf(stderr, "       (in place)  pfai [files]\n");
+    }
   }
   for (int i = 1; i < argc; i++) {
     const char *name = argv[i];
+
     FILE *in = fopen(name, "r");
-    //    FILE *out = fopen("out.py", "w");
-    FILE *out = stdout;
     if (!in) {
       fprintf(stderr, "File %s dne\n", name);
       return 1;
     }
-    pyformat(in, out);
 
-    // Evtly, mv/swap the output file with the original on completion
+    FILE *out;
+    if (inplace) {
+      /* dump to tmp, then copy. Hope it's ram! */
+      out = tmpfile();
+    } else {
+      out = stdout;
+    }
+    pyformat(in, out);
+    fclose(in);
+    if (inplace) {
+      fflush(out);
+      rewind(out);
+      FILE *over = fopen(name, "w");
+      char buf[BUFSIZE];
+      int len;
+      while ((len = fread(buf, 1, BUFSIZE, out))) {
+        fwrite(buf, 1, len, over);
+      }
+      fclose(over);
+      fclose(out);
+    }
   }
 }
