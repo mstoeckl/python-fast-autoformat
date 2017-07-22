@@ -1,7 +1,6 @@
 TODO
 pfa
 pfai
-*.py
 *.user
 *.includes
 *.defines
@@ -10,3 +9,5 @@ pfai
 *.config
 *.o
 *.out.*
+/test/
+/results/
