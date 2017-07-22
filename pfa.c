@@ -510,7 +510,11 @@ void pyformat(FILE *file, FILE *out) {
             *eos = '\0';
             eos--;
           }
-          buildpt += sprintf(buildpt, "# %s !#", sos);
+          if (sos[0] == '!') {
+            buildpt += sprintf(buildpt, "#%s !#", sos);
+          } else {
+            buildpt += sprintf(buildpt, "# %s !#", sos);
+          }
           splitpoints[nsplits] = buildpt - laccum;
           split_ratings[nsplits] = -1;
           split_nestings[nsplits] = nests;
