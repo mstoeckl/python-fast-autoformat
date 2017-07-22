@@ -48,6 +48,13 @@ enum {
   TOK_UNARYOP,
 };
 
+enum {
+  LINE_IS_BLANK,
+  LINE_IS_CONTINUATION,
+  LINE_IS_TRISTR,
+  LINE_IS_NORMAL,
+};
+
 const char *tok_to_string(int tok) {
   switch (tok) {
   case TOK_LABEL:
@@ -89,6 +96,21 @@ const char *tok_to_string(int tok) {
   }
 }
 
+const char *ls_to_string(int ls) {
+  switch (ls) {
+  case LINE_IS_BLANK:
+    return "LINE_BLNK";
+  case LINE_IS_CONTINUATION:
+    return "LINE_CONT";
+  case LINE_IS_NORMAL:
+    return "LINE_NORM";
+  case LINE_IS_TRISTR:
+    return "LINE_TSTR";
+  default:
+    return "LINE_????";
+  }
+}
+
 int isalpha_lead(char c) {
   if (c > 127)
     return 1;
@@ -123,7 +145,6 @@ const char *specnames[] = {"if",  "then",  "else",    "import", "except",
 void pyformat(FILE *file, FILE *out) {
   char linebuf[BUFSIZE];
   const char *lbufend = &linebuf[BUFSIZE - 1];
-  char *lbufstart = linebuf;
 
   char tokbuf[BUFSIZE];
   int toks[BUFSIZE];
@@ -132,23 +153,22 @@ void pyformat(FILE *file, FILE *out) {
   int ntoks = 0;
 
   char string_starter = '\0';
-  int is_continuation = 0;
+  int line_state = LINE_IS_NORMAL;
   int leading_spaces = 0;
   int ltok = TOK_INBETWEEN;
   int neof = 0;
-  int was_last_empty = 0;
   int nestings = 0;
   while (1) {
-    char *readct = fgets(lbufstart, lbufend - lbufstart, file);
+    char *readct = fgets(linebuf, lbufend - linebuf, file);
     if (!readct) {
-      if (!is_continuation || neof) {
+      if (line_state == LINE_IS_NORMAL || line_state == LINE_IS_BLANK || neof) {
         break;
       } else {
         neof = 1;
       }
     }
 
-    if (!is_continuation) {
+    if (line_state == LINE_IS_NORMAL || line_state == LINE_IS_BLANK) {
       ntoks = 0;
       tokd = tokbuf;
       stokd = tokbuf;
@@ -158,33 +178,47 @@ void pyformat(FILE *file, FILE *out) {
     /* token-split the line with NULL characters; double NULL is eof */
 
     /* STATE MACHINE TOKENIZE */
-    char *cur = lbufstart;
+    char *cur = linebuf;
     int llen = readct ? strlen(cur) : 0;
     /* space char gives room for termination checks */
     cur[llen - 1] = '\n';
     cur[llen] = '\0';
     cur[llen + 1] = '\0';
 
-    if (!is_continuation) {
+    int is_whitespace = 1;
+    for (char *c = cur; *c != '\n'; ++c)
+      if (*c != ' ' && *c != '\t')
+        is_whitespace = 0;
+
+    int dumprest = 0;
+    if (line_state == LINE_IS_TRISTR) {
+      /* tristrings are unaffected by blank lines */
+    } else if (is_whitespace) {
+      if (line_state == LINE_IS_CONTINUATION) {
+        line_state = LINE_IS_BLANK;
+        dumprest = 1;
+      } else if (line_state == LINE_IS_BLANK) {
+        continue;
+      } else {
+        line_state = LINE_IS_BLANK;
+      }
+    } else if (line_state == LINE_IS_BLANK) {
+      line_state = LINE_IS_NORMAL;
+    }
+
+    //    fprintf(out, "###%s|%d|%s", ls_to_string(line_state), is_whitespace,
+    //    cur);
+
+    if (line_state == LINE_IS_NORMAL) {
       leading_spaces = 0;
       for (; cur[0] == '\n' || cur[0] == ' ' || cur[0] == '\t'; cur++) {
         leading_spaces++;
       }
     } else {
     }
-    int rle = strlen(cur);
-    if (rle <= 1) {
-      if (was_last_empty) {
-        is_continuation = 0;
-        continue;
-      }
-      was_last_empty = 1;
-    } else {
-      was_last_empty = 0;
-    }
 
     int proctok = TOK_INBETWEEN;
-    if (is_continuation == 2) {
+    if (line_state == LINE_IS_TRISTR) {
       proctok = TOK_TRISTR;
       --ntoks;
       --tokd;
@@ -351,7 +385,7 @@ void pyformat(FILE *file, FILE *out) {
         if (nxt == '#') {
           proctok = TOK_COMMENT;
           /* nix the terminating newline */
-          lbufstart[llen - 1] = ' ';
+          linebuf[llen - 1] = ' ';
         } else if (nxt == '"' || nxt == '\'') {
           string_starter = nxt;
           proctok = TOK_STRING;
@@ -423,17 +457,19 @@ void pyformat(FILE *file, FILE *out) {
 
     /* determine if the next line shall continue this one */
     ltok = toks[ntoks - 1];
-    if (proctok == TOK_TRISTR) {
-      is_continuation = 2;
+    if (line_state == LINE_IS_BLANK) {
+      line_state = LINE_IS_BLANK;
+    } else if (proctok == TOK_TRISTR) {
+      line_state = LINE_IS_TRISTR;
     } else if (ltok == TOK_LCONT || nestings > 0) {
-      is_continuation = 1;
+      line_state = LINE_IS_CONTINUATION;
     } else {
-      is_continuation = 0;
+      line_state = LINE_IS_NORMAL;
     }
 
-    if (was_last_empty) {
+    if (line_state == LINE_IS_BLANK && !dumprest) {
       fprintf(out, "\n");
-    } else if (!is_continuation || neof) {
+    } else if (line_state == LINE_IS_NORMAL || neof || dumprest) {
       /* Introduce spaces to list */
       char lsp[BUFSIZE];
       memset(lsp, ' ', leading_spaces);
@@ -602,12 +638,11 @@ void pyformat(FILE *file, FILE *out) {
       } else {
         fprintf(out, "%s\n", laccum);
       }
-    }
-    /* Append to prior buffer or not */
-    if (!is_continuation) {
-      lbufstart = linebuf;
-    } else {
-      lbufstart += llen - -1;
+      if (line_state == LINE_IS_BLANK) {
+        fprintf(out, "\n");
+      } else {
+        line_state = LINE_IS_NORMAL;
+      }
     }
   }
 }
