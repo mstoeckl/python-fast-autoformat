@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 /* Tokens: things which can't be split.
  * For instance,
  *   TOK_LABEL includes everything from 'import' to 'quit' to 'try'
@@ -13,14 +16,7 @@
  *   TOK_OPERATOR is: * ^ | |= @=
  *   TOK_EXP is: **
  *   TOK_PM is: + -
- *   TOK_COMMOLON is: : ,
- * Note that all our token definitions are by left/right spacing action
- * For instance, TOK_OPERATOR unconditionally spaces left/right
- *               TOK_COMMOLON inserts a right space unless followed by
- * TOK_CBRACE
- *               TOK_LABEL has no right gap relative to TOK_OBRACE
- *               TOK_EXP binds close on the left and on the right
- *               TOK_PM acts like TOK_OPERATOR, except when it binds right
+ *   TOK_COLON is: :
  */
 enum {
   TOK_LABEL,
@@ -73,6 +69,21 @@ size_t vlbuf_expand(struct vlbuf *ib, size_t minsize) {
   } while (ib->len <= minsize);
   ib->d.vd = realloc(ib->d.vd, ib->len * ib->esize);
   return ib->len;
+}
+
+size_t vlbuf_append(struct vlbuf *ib, const char *str, size_t countedlen,
+                    FILE *out) {
+  int l = strlen(str);
+  if (ib) {
+    if (ib->len <= l + countedlen + 1) {
+      vlbuf_expand(ib, l + countedlen + 1);
+    }
+    memcpy(&ib->d.ch[countedlen], str, l + 1);
+  }
+  if (out) {
+    fputs(str, out);
+  }
+  return l + countedlen;
 }
 
 void vlbuf_free(struct vlbuf *ib) {
@@ -168,7 +179,8 @@ const char *specnames[] = {"if",  "then",  "else",    "import", "except",
                            "for", "while", "return",  "yield",  "from",
                            "as",  "else",  "finally", NULL};
 
-void pyformat(FILE *file, FILE *out) {
+void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
+              struct vlbuf *formfile) {
   struct vlbuf linebuf = vlbuf_make(sizeof(char));
   struct vlbuf tokbuf = vlbuf_make(sizeof(char));
   struct vlbuf toks = vlbuf_make(sizeof(int));
@@ -189,6 +201,8 @@ void pyformat(FILE *file, FILE *out) {
   int neof = 0;
   int nestings = 0;
   int netlen = 0;
+  int origfilelen = 0;
+  int formfilelen = 0;
   while (1) {
     char *readct;
     int llen = 0;
@@ -197,6 +211,12 @@ void pyformat(FILE *file, FILE *out) {
       if (!readct)
         break;
       int rlen = strlen(readct);
+      if (origfile) {
+        if (origfile->len < rlen + origfilelen)
+          vlbuf_expand(origfile, rlen + origfilelen);
+        strncpy(&origfile->d.ch[origfilelen], &linebuf.d.ch[llen], rlen);
+        origfilelen += rlen;
+      }
       llen += rlen;
       if (linebuf.d.ch[llen - 1] != '\n') {
         vlbuf_expand(&linebuf, llen + 3);
@@ -528,7 +548,7 @@ void pyformat(FILE *file, FILE *out) {
     }
 
     if (line_state == LINE_IS_BLANK && !dumprest) {
-      fprintf(out, "\n");
+      formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
     } else if (line_state == LINE_IS_NORMAL || neof || dumprest) {
       /* Introduce spaces to list */
 
@@ -666,7 +686,8 @@ void pyformat(FILE *file, FILE *out) {
 
       int length_left = 80 - leading_spaces;
       int first = 1;
-      fprintf(out, "%s", lsp.d.ch);
+      formfilelen = vlbuf_append(formfile, lsp.d.ch, formfilelen, out);
+
       if (nsplits > 0) {
         for (int i = 0; i < nsplits; i++) {
           int fr = i > 0 ? splitpoints.d.in[i - 1] : 0;
@@ -683,7 +704,8 @@ void pyformat(FILE *file, FILE *out) {
           if ((nlen < length_left || first) && !force_split) {
             first = 0;
             length_left -= nlen;
-            fprintf(out, "%s", lineout.d.ch);
+            formfilelen =
+                vlbuf_append(formfile, lineout.d.ch, formfilelen, out);
           } else {
             char *prn = &lineout.d.ch[0];
             if (lineout.d.ch[0] == ' ') {
@@ -691,21 +713,24 @@ void pyformat(FILE *file, FILE *out) {
               nlen -= 1;
             }
             if (force_split || split_nestings.d.in[i - 1] > 0) {
-              fprintf(out, "\n    ");
+              formfilelen = vlbuf_append(formfile, "\n    ", formfilelen, out);
             } else {
-              fprintf(out, " \\\n    ");
+              formfilelen =
+                  vlbuf_append(formfile, " \\\n    ", formfilelen, out);
             }
             length_left = 80 - leading_spaces - 4 - nlen;
-            fprintf(out, "%s%s", lsp.d.ch, prn);
+            formfilelen = vlbuf_append(formfile, lsp.d.ch, formfilelen, out);
+            formfilelen = vlbuf_append(formfile, prn, formfilelen, out);
             first = 1;
           }
         }
-        fprintf(out, "\n");
+        formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
       } else {
-        fprintf(out, "%s\n", laccum.d.ch);
+        formfilelen = vlbuf_append(formfile, laccum.d.ch, formfilelen, out);
+        formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
       }
       if (line_state == LINE_IS_BLANK) {
-        fprintf(out, "\n");
+        formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
       } else {
         line_state = LINE_IS_NORMAL;
       }
@@ -738,34 +763,69 @@ int main(int argc, char **argv) {
       fprintf(stderr, "       (in place)  pfai [files]\n");
     }
   }
+
+  struct vlbuf origfile = vlbuf_make(sizeof(char));
+  struct vlbuf formfile = vlbuf_make(sizeof(char));
+  int maxnlen = 0;
+  for (int i = 1; i < argc; i++) {
+    int l = strlen(argv[i]);
+    if (l > maxnlen)
+      maxnlen = l;
+  }
+  char *nbuf = (char *)malloc(sizeof(char) * (maxnlen + 12));
+
   for (int i = 1; i < argc; i++) {
     const char *name = argv[i];
-
     FILE *in = fopen(name, "r");
     if (!in) {
       fprintf(stderr, "File %s dne\n", name);
       return 1;
     }
-
-    FILE *out;
-    char buf[24];
-    strncpy(buf, ".pfa_XXXXXX", 23);
-    if (inplace) {
-      /* dump to tmp, then copy. Hope it's ram! */
-      int fd = mkstemp(buf);
-      out = fdopen(fd, "w");
-    } else {
-      out = stdout;
-    }
-    pyformat(in, out);
+    /* Format file contents, saving to stdout or to buffers */
+    pyformat(in, inplace ? 0 : stdout, inplace ? &origfile : 0,
+             inplace ? &formfile : 0);
     fclose(in);
+
     if (inplace) {
-      fclose(out);
-      int s = rename(buf, name);
-      if (s) {
-        fprintf(stderr, "Failed to overwrite %s with %s\n", name, buf);
-        remove(buf);
+      int unchanged = strcmp(origfile.d.ch, formfile.d.ch) == 0;
+      if (unchanged) {
+        /* Do nothing */
+      } else {
+        /* Construct the temporary name */
+        int l = strlen(name);
+        strncpy(nbuf, name, l + 1);
+        int co = 0;
+        for (int j = l - 1; j >= 0; j--)
+          if (name[j] == '/') {
+            co = j + 1;
+            break;
+          }
+        strncpy(&nbuf[co], ".pfa_XXXXXX", 12);
+
+        /* Write to temporary */
+        int fo = mkstemp(nbuf);
+        FILE *out = fdopen(fo, "w");
+        fwrite(formfile.d.ch, 1, strlen(formfile.d.ch), out);
+        fclose(out);
+
+        /* Ensure properties match */
+        struct stat st;
+        if (stat(name, &st) < 0) {
+          fprintf(stderr, "Could not get original permissions for %s\n", name);
+        } else {
+          chmod(nbuf, st.st_mode);
+          chown(nbuf, st.st_uid, st.st_gid);
+        }
+
+        int s = rename(nbuf, name);
+        if (s) {
+          fprintf(stderr, "Failed to overwrite %s with %s\n", name, nbuf);
+          remove(nbuf);
+        }
       }
     }
   }
+  vlbuf_free(&origfile);
+  vlbuf_free(&formfile);
+  free(nbuf);
 }
