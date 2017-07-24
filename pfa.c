@@ -63,7 +63,7 @@ struct vlbuf vlbuf_make(size_t es) {
   return ib;
 }
 
-size_t vlbuf_expand(struct vlbuf *ib, size_t minsize) {
+static size_t vlbuf_expand(struct vlbuf *ib, size_t minsize) {
   do {
     ib->len *= 2;
   } while (ib->len <= minsize);
@@ -71,8 +71,8 @@ size_t vlbuf_expand(struct vlbuf *ib, size_t minsize) {
   return ib->len;
 }
 
-size_t vlbuf_append(struct vlbuf *ib, const char *str, size_t countedlen,
-                    FILE *out) {
+static size_t vlbuf_append(struct vlbuf *ib, const char *str, size_t countedlen,
+                           FILE *out) {
   int l = strlen(str);
   if (ib) {
     if (ib->len <= l + countedlen + 1) {
@@ -86,13 +86,23 @@ size_t vlbuf_append(struct vlbuf *ib, const char *str, size_t countedlen,
   return l + countedlen;
 }
 
-void vlbuf_free(struct vlbuf *ib) {
+static void vlbuf_free(struct vlbuf *ib) {
   free(ib->d.vd);
   ib->d.vd = 0;
   ib->len = 0;
 }
 
-const char *tok_to_string(int tok) {
+static size_t strapp(char *target, const char *app) {
+  size_t delta = 0;
+  while (*app != '\0') {
+    target[delta] = *app;
+    delta++;
+    app++;
+  }
+  return delta;
+}
+
+static const char *tok_to_string(int tok) {
   switch (tok) {
   case TOK_LABEL:
     return "LAB";
@@ -133,7 +143,7 @@ const char *tok_to_string(int tok) {
   }
 }
 
-const char *ls_to_string(int ls) {
+static const char *ls_to_string(int ls) {
   switch (ls) {
   case LINE_IS_BLANK:
     return "LINE_BLNK";
@@ -148,7 +158,7 @@ const char *ls_to_string(int ls) {
   }
 }
 
-int isalpha_lead(char c) {
+static int isalpha_lead(char c) {
   if (c > 127)
     return 1;
   if ('a' <= c && c <= 'z')
@@ -159,7 +169,7 @@ int isalpha_lead(char c) {
     return 1;
   return 0;
 }
-int isnumeric_lead(char c) {
+static int isnumeric_lead(char c) {
   if ('0' <= c && c <= '9')
     return 1;
   if ('.' == c)
@@ -167,7 +177,7 @@ int isnumeric_lead(char c) {
   return 0;
 }
 
-int isoptype(char c) {
+static int isoptype(char c) {
   if (c == '=' || c == '+' || c == '-' || c == '@' || c == '|' || c == '^' ||
       c == '&' || c == '*' || c == '/' || c == '<' || c == '>' || c == '!' ||
       c == '~' || c == '%')
@@ -175,12 +185,12 @@ int isoptype(char c) {
   return 0;
 }
 
-const char *specnames[] = {"if",  "then",  "else",    "import", "except",
-                           "for", "while", "return",  "yield",  "from",
-                           "as",  "else",  "finally", NULL};
+static const char *specnames[] = {"if",  "then",  "else",    "import", "except",
+                                  "for", "while", "return",  "yield",  "from",
+                                  "as",  "else",  "finally", NULL};
 
-void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
-              struct vlbuf *formfile) {
+static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
+                     struct vlbuf *formfile) {
   struct vlbuf linebuf = vlbuf_make(sizeof(char));
   struct vlbuf tokbuf = vlbuf_make(sizeof(char));
   struct vlbuf toks = vlbuf_make(sizeof(int));
@@ -572,7 +582,6 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
 
       /* Line wrapping & printing, oh joy */
       char *tokpos = tokbuf.d.ch;
-      //      buildpt += sprintf(buildpt, "%s", lsp);
       int nests = 0;
       for (int i = 0; i < ntoks; i++) {
         int pptok = i > 0 ? toks.d.in[i - 1] : TOK_INBETWEEN;
@@ -583,7 +592,7 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         if (pretok == TOK_LCONT) {
           /* ignore line breaks */
         } else if (pretok == TOK_COMMENT) {
-          char *eos = tokpos + toklen;
+          char *eos = tokpos + toklen - 1;
           char *sos = tokpos;
           while (*sos == ' ') {
             sos++;
@@ -593,16 +602,18 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             eos--;
           }
           if (sos[0] == '!') {
-            buildpt += sprintf(buildpt, "#%s !#", sos);
+            buildpt += strapp(buildpt, "#");
           } else {
-            buildpt += sprintf(buildpt, "# %s !#", sos);
+            buildpt += strapp(buildpt, "# ");
           }
+          buildpt += strapp(buildpt, sos);
+          buildpt += strapp(buildpt, "!#");
           splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
           split_ratings.d.in[nsplits] = -1;
           split_nestings.d.in[nsplits] = nests;
           nsplits++;
         } else {
-          buildpt += sprintf(buildpt, "%s", tokpos);
+          buildpt += strapp(buildpt, tokpos);
           splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
           split_ratings.d.in[nsplits] = 0;
           split_nestings.d.in[nsplits] = nests;
@@ -611,7 +622,9 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         tokpos += toklen + 1;
 
         int space;
-        if (pretok == TOK_LCONT) {
+        if (pretok == TOK_COMMENT) {
+          space = 0;
+        } else if (pretok == TOK_LCONT) {
           space = 0;
         } else if (pretok == TOK_EQUAL || postok == TOK_EQUAL) {
           space = nests == 0;
@@ -669,7 +682,7 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           space = 1;
         }
         if (space && i < ntoks - 1) {
-          buildpt += sprintf(buildpt, " ");
+          buildpt += strapp(buildpt, " ");
         }
 
         if (pretok == TOK_OBRACE) {
@@ -749,6 +762,9 @@ void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
 }
 
 int main(int argc, char **argv) {
+  (void)ls_to_string;
+  (void)tok_to_string;
+
   int inplace = 0;
   if (argv[0][strlen(argv[0]) - 1] == 'i') {
     inplace = 1;
