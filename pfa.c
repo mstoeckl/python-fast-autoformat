@@ -185,9 +185,13 @@ static int isoptype(char c) {
   return 0;
 }
 
-static const char *specnames[] = {"if",  "then",  "else",    "import", "except",
-                                  "for", "while", "return",  "yield",  "from",
-                                  "as",  "else",  "finally", NULL};
+/* import keyword; print(*keyword.kwlist) */
+static const char *specnames[] = {
+    "and",    "as",    "assert", "break",  "class",   "continue", "def",
+    "del",    "elif",  "else",   "except", "finally", "for",      "from",
+    "global", "if",    "import", "in",     "is",      "lambda",   "nonlocal",
+    "not",    "or",    "pass",   "raise",  "return",  "try",      "while",
+    "with",   "yield", NULL};
 
 static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
                      struct vlbuf *formfile) {
