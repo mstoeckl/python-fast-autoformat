@@ -445,12 +445,17 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           proctok = TOK_EXP;
         } else if (lopchar == '/' && nxt == '/') {
         } else if (nxt == '=') {
-        } else {
-          if (lopchar == '-' || lopchar == '+' || lopchar == '*') {
-            otok = TOK_UNARYOP;
+          if (proctok == TOK_EXP) {
+            proctok = TOK_OPERATOR;
           }
-          if (lopchar == '=' && !isoptype(cur[-2])) {
-            otok = TOK_EQUAL;
+        } else {
+          if (proctok != TOK_EXP) {
+            if (lopchar == '-' || lopchar == '+' || lopchar == '*') {
+              otok = TOK_UNARYOP;
+            }
+            if (lopchar == '=' && !isoptype(cur[-2])) {
+              otok = TOK_EQUAL;
+            }
           }
           tokfin = 1;
           proctok = TOK_INBETWEEN;
