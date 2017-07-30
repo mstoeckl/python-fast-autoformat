@@ -186,6 +186,7 @@ static int isoptype(char c) {
 }
 
 /* import keyword; print(*keyword.kwlist) */
+/* todo: build fast detection state matchine, testing inclusion is 30% */
 static const char *specnames[] = {
     "and",    "as",    "assert", "break",  "class",   "continue", "def",
     "del",    "elif",  "else",   "except", "finally", "for",      "from",
@@ -633,6 +634,10 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         int space;
         if (pretok == TOK_COMMENT) {
           space = 0;
+        } else if (pptok == TOK_INBETWEEN && pretok == TOK_OPERATOR &&
+                   postok == TOK_LABEL) {
+          /* annotation */
+          space = 0;
         } else if (pretok == TOK_LCONT) {
           space = 0;
         } else if (pretok == TOK_EQUAL || postok == TOK_EQUAL) {
@@ -715,15 +720,41 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           int fr = i > 0 ? splitpoints.d.in[i - 1] : 0;
           int to = i >= nsplits - 1 ? eoff : splitpoints.d.in[i];
           memcpy(lineout.d.ch, &laccum.d.ch[fr], to - fr);
-          lineout.d.ch[to - fr] = '\0';
           if (split_ratings.d.in[i] < 0) {
             to -= 2;
-            lineout.d.ch[to - fr] = '\0';
           }
+          lineout.d.ch[to - fr] = '\0';
           int nlen = to - fr;
           int force_split = i > 0 ? split_ratings.d.in[i - 1] < 0 : 0;
 
-          if ((nlen < length_left || first) && !force_split) {
+          /* The previous location provides the break-off score */
+          int bscore = 0, bk = -1;
+          for (int rleft = length_left, k = i; k < nsplits && rleft >= 0; k++) {
+            /* Estimate segment length */
+            int fr = k > 0 ? splitpoints.d.in[k - 1] : 0;
+            int ofr = k > 1 ? splitpoints.d.in[k - 2] : 0;
+            int to = k >= nsplits - 1 ? eoff : splitpoints.d.in[k];
+            if (split_ratings.d.in[k] < 0) {
+              to -= 2;
+            }
+            int len = to - fr;
+            int isc = 100;
+            /* Just by previous. Q: split tok? or 'saved length' field, w/
+             * comments counting as -inf */
+            if (laccum.d.ch[ofr] == ',') {
+              isc = rleft - len - 15;
+            } else if (laccum.d.ch[ofr] == ':') {
+              isc = rleft - len - 15;
+            } else {
+              isc = rleft - len;
+            }
+            rleft -= len;
+            if (isc < bscore) {
+              bscore = isc;
+              bk = k;
+            }
+          }
+          if ((nlen < length_left || first) && !force_split && bk != i) {
             first = 0;
             length_left -= nlen;
             formfilelen =
