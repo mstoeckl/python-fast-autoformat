@@ -186,7 +186,7 @@ static int isoptype(char c) {
 }
 
 /* import keyword; print(*keyword.kwlist) */
-/* todo: build fast detection state matchine, testing inclusion is 30% */
+/* todo: build fast detection state machine, testing inclusion is 30% */
 static const char *specnames[] = {
     "and",    "as",    "assert", "break",  "class",   "continue", "def",
     "del",    "elif",  "else",   "except", "finally", "for",      "from",
@@ -712,7 +712,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       /* TODO: create a 'nesting depth' field */
 
       int length_left = 80 - leading_spaces;
-      int first = 1;
       formfilelen = vlbuf_append(formfile, lsp.d.ch, formfilelen, out);
 
       if (nsplits > 0) {
@@ -740,7 +739,8 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             int len = to - fr;
             int isc = 100;
             /* Just by previous. Q: split tok? or 'saved length' field, w/
-             * comments counting as -inf */
+             * comments counting as -inf ls. Issue: what if there's less than N
+             * fields left ?*/
             if (laccum.d.ch[ofr] == ',') {
               isc = rleft - len - 15;
             } else if (laccum.d.ch[ofr] == ':') {
@@ -753,9 +753,24 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
               bscore = isc;
               bk = k;
             }
+            /* Never hold up a terminator */
+            if (rleft >= 0 && k == nsplits - 1) {
+              bk = -1;
+            }
           }
-          if ((nlen < length_left || first) && !force_split && bk != i) {
-            first = 0;
+          int want_split = bk == i;
+          int length_split = nlen >= length_left;
+
+          int continuing = 1;
+          if (i == 0) {
+            continuing = 1;
+          } else if (force_split || length_split || want_split) {
+            continuing = 0;
+          } else {
+            continuing = 1;
+          }
+
+          if (continuing) {
             length_left -= nlen;
             formfilelen =
                 vlbuf_append(formfile, lineout.d.ch, formfilelen, out);
@@ -774,7 +789,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             length_left = 80 - leading_spaces - 4 - nlen;
             formfilelen = vlbuf_append(formfile, lsp.d.ch, formfilelen, out);
             formfilelen = vlbuf_append(formfile, prn, formfilelen, out);
-            first = 1;
           }
         }
         formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
