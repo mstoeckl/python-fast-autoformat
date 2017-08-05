@@ -229,7 +229,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       if (origfile) {
         if (origfile->len < rlen + origfilelen)
           vlbuf_expand(origfile, rlen + origfilelen);
-        strncpy(&origfile->d.ch[origfilelen], &linebuf.d.ch[llen], rlen);
+        memcpy(&origfile->d.ch[origfilelen], &linebuf.d.ch[llen], rlen + 1);
         origfilelen += rlen;
       }
       llen += rlen;
@@ -536,6 +536,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         ++tokd;
         /* convert label to special if it's a word in a list we have */
         if (otok == TOK_LABEL) {
+          /* todo: run constructed state machine to check if word in group. */
           for (const char **cc = &specnames[0]; *cc; ++cc) {
             if (strcmp(*cc, stokd) == 0) {
               otok = TOK_SPECIAL;
@@ -617,7 +618,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             buildpt += strapp(buildpt, "# ");
           }
           buildpt += strapp(buildpt, sos);
-          buildpt += strapp(buildpt, "!#");
           splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
           split_ratings.d.in[nsplits] = -1;
           split_nestings.d.in[nsplits] = nests;
@@ -719,9 +719,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           int fr = i > 0 ? splitpoints.d.in[i - 1] : 0;
           int to = i >= nsplits - 1 ? eoff : splitpoints.d.in[i];
           memcpy(lineout.d.ch, &laccum.d.ch[fr], to - fr);
-          if (split_ratings.d.in[i] < 0) {
-            to -= 2;
-          }
           lineout.d.ch[to - fr] = '\0';
           int nlen = to - fr;
           int force_split = i > 0 ? split_ratings.d.in[i - 1] < 0 : 0;
@@ -733,9 +730,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             int fr = k > 0 ? splitpoints.d.in[k - 1] : 0;
             int ofr = k > 1 ? splitpoints.d.in[k - 2] : 0;
             int to = k >= nsplits - 1 ? eoff : splitpoints.d.in[k];
-            if (split_ratings.d.in[k] < 0) {
-              to -= 2;
-            }
             int len = to - fr;
             int isc = 100;
             /* Just by previous. Q: split tok? or 'saved length' field, w/
