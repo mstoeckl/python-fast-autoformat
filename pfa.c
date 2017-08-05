@@ -186,13 +186,67 @@ static int isoptype(char c) {
 }
 
 /* import keyword; print(*keyword.kwlist) */
-/* todo: build fast detection state machine, testing inclusion is 30% */
 static const char *specnames[] = {
     "and",    "as",    "assert", "break",  "class",   "continue", "def",
     "del",    "elif",  "else",   "except", "finally", "for",      "from",
     "global", "if",    "import", "in",     "is",      "lambda",   "nonlocal",
     "not",    "or",    "pass",   "raise",  "return",  "try",      "while",
     "with",   "yield", NULL};
+
+static int *spectable = NULL;
+static int *terminal = NULL;
+static void make_special_name_table() {
+  /* string tree uses least memory; this is simpler to debug */
+  int ncodes = 0;
+  int nstates = 0;
+  for (int i = 0; specnames[i]; i++) {
+    nstates += strlen(specnames[i]) + 1;
+    ncodes++;
+  }
+  spectable = (int *)malloc(sizeof(int) * 26 * nstates);
+  terminal = (int *)malloc(sizeof(int) * nstates);
+  /* by default all paths lead one to failure */
+  for (int i = 0; i < 26 * nstates; i++) {
+    spectable[i] = -1;
+  }
+  for (int i = 0; i < nstates; i++) {
+    terminal[i] = 0;
+  }
+  /* fill in table, reusing old paths if available */
+  int gstate = 1;
+  for (int i = 0; i < ncodes; i++) {
+    const char *s = specnames[i];
+    int cstate = 0;
+    for (int k = 0; s[k]; k++) {
+      int cc = s[k] - 'a';
+      if (spectable[26 * cstate + cc] == -1) {
+        spectable[26 * cstate + cc] = gstate;
+        cstate = gstate;
+        gstate++;
+      } else {
+        cstate = spectable[26 * cstate + cc];
+      }
+    }
+    terminal[cstate] = 1;
+  }
+}
+static void free_special_name_table() {
+  free(spectable);
+  free(terminal);
+}
+static int is_special_name(const char *tst) {
+  int fcode = 0;
+  for (int k = 0; tst[k]; k++) {
+    if (tst[k] < 'a' || tst[k] > 'z') {
+      return 0;
+    }
+    fcode = spectable[26 * fcode + (tst[k] - 'a')];
+    if (fcode == -1) {
+      return 0;
+    }
+  }
+  return terminal[fcode];
+}
 
 static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
                      struct vlbuf *formfile) {
@@ -535,14 +589,8 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         *tokd = '\0';
         ++tokd;
         /* convert label to special if it's a word in a list we have */
-        if (otok == TOK_LABEL) {
-          /* todo: run constructed state machine to check if word in group. */
-          for (const char **cc = &specnames[0]; *cc; ++cc) {
-            if (strcmp(*cc, stokd) == 0) {
-              otok = TOK_SPECIAL;
-              break;
-            }
-          }
+        if (otok == TOK_LABEL && is_special_name(stokd)) {
+          otok = TOK_SPECIAL;
         }
         if (otok == TOK_OBRACE) {
           nestings++;
@@ -708,9 +756,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       int eoff = buildpt - laccum.d.ch;
 
       /* the art of line breaking */
-
-      /* TODO: create a 'nesting depth' field */
-
       int length_left = 80 - leading_spaces;
       formfilelen = vlbuf_append(formfile, lsp.d.ch, formfilelen, out);
 
@@ -826,8 +871,10 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Usage: pfa [files]\n");
       fprintf(stderr, "       (in place)  pfai [files]\n");
     }
+    return 1;
   }
 
+  make_special_name_table();
   struct vlbuf origfile = vlbuf_make(sizeof(char));
   struct vlbuf formfile = vlbuf_make(sizeof(char));
   int maxnlen = 0;
@@ -892,4 +939,5 @@ int main(int argc, char **argv) {
   vlbuf_free(&origfile);
   vlbuf_free(&formfile);
   free(nbuf);
+  free_special_name_table();
 }
