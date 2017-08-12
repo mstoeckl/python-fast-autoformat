@@ -4,3 +4,4 @@ include README.md
 include pfa/pfa.c
 include pfa/__init__.py
 include setup.py
+include setup.cfg

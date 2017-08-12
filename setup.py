@@ -32,7 +32,8 @@ setup(name='pfa', packages=['pfa',], version='0.1',
     data_files = [('bin/', ['pfa/pfa', 'pfa/pfai'])],
 
     classifiers = ["License :: OSI Approved :: MIT License",
-        "Intended Audience :: Developers" "Programming Language :: C",
+        "Intended Audience :: Developers",
+        "Programming Language :: C",
         "Programming Language :: Python :: 3",
         "Operating System :: POSIX :: Linux", "Topic :: Utilities"],
 )
