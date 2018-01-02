@@ -706,6 +706,8 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           space = 0;
         } else if (pretok == TOK_OPERATOR && postok == TOK_UNARYOP) {
           space = 1;
+        } else if (pretok == TOK_LABEL && postok == TOK_STRING) {
+          space = 0;
         } else if (pretok == TOK_LABEL && postok == TOK_UNARYOP) {
           space = 1;
         } else if (pretok == TOK_CBRACE && postok == TOK_UNARYOP) {
