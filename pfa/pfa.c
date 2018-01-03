@@ -45,6 +45,8 @@ enum {
   LINE_IS_NORMAL,
 };
 
+enum { SSCORE_COMMENT = 10000, SSCORE_NESTING = -100 };
+
 struct vlbuf {
   union {
     void *vd;
@@ -396,7 +398,11 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       case TOK_SPECIAL:
       case TOK_LABEL: {
         if (isalpha_lead(nxt) || ('0' <= nxt && nxt <= '9')) {
-
+        } else if (nxt == '\'' || nxt == '\"') {
+          /* String with prefix */
+          proctok = TOK_STRING;
+          nstrleads = 1;
+          string_starter = nxt;
         } else {
           tokfin = 1;
           proctok = TOK_INBETWEEN;
@@ -642,11 +648,17 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       /* Line wrapping & printing, oh joy */
       char *tokpos = tokbuf.d.ch;
       int nests = 0;
+      int pptok = TOK_INBETWEEN;
+      int pretok = TOK_INBETWEEN;
+      int postok = toks.d.in[0];
       for (int i = 0; i < ntoks; i++) {
-        int pptok = i > 0 ? toks.d.in[i - 1] : TOK_INBETWEEN;
-        int pretok = toks.d.in[i];
-        int postok = toks.d.in[i + 1];
+        pptok = pretok;
+        pretok = postok;
+        postok = toks.d.in[i + 1];
         int toklen = strlen(tokpos);
+        if (pretok == TOK_OBRACE) {
+          nests++;
+        }
 
         if (pretok == TOK_LCONT) {
           /* ignore line breaks */
@@ -667,13 +679,24 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           }
           buildpt += strapp(buildpt, sos);
           splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
-          split_ratings.d.in[nsplits] = -1;
+          split_ratings.d.in[nsplits] = SSCORE_COMMENT;
           split_nestings.d.in[nsplits] = nests;
           nsplits++;
         } else {
           buildpt += strapp(buildpt, tokpos);
           splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
-          split_ratings.d.in[nsplits] = 0;
+          if (pretok == TOK_COMMA && postok != TOK_CBRACE && nests > 0) {
+            split_ratings.d.in[nsplits] = 1;
+          } else if (pretok == TOK_COLON && postok != TOK_CBRACE) {
+            split_ratings.d.in[nsplits] = 1;
+          } else if (pretok == TOK_LABEL && postok == TOK_OBRACE) {
+            split_ratings.d.in[nsplits] = SSCORE_NESTING;
+          } else if (pretok == TOK_DOT || postok == TOK_DOT) {
+            split_ratings.d.in[nsplits] = -2;
+          } else {
+            split_ratings.d.in[nsplits] = 0;
+          }
+
           split_nestings.d.in[nsplits] = nests;
           nsplits++;
         }
@@ -689,7 +712,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         } else if (pretok == TOK_LCONT) {
           space = 0;
         } else if (pretok == TOK_EQUAL || postok == TOK_EQUAL) {
-          space = nests == 0;
+          space = (nests == 0);
         } else if (pretok == TOK_SPECIAL) {
           if (postok == TOK_COLON) {
             space = 0;
@@ -706,8 +729,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           space = 0;
         } else if (pretok == TOK_OPERATOR && postok == TOK_UNARYOP) {
           space = 1;
-        } else if (pretok == TOK_LABEL && postok == TOK_STRING) {
-          space = 0;
         } else if (pretok == TOK_LABEL && postok == TOK_UNARYOP) {
           space = 1;
         } else if (pretok == TOK_CBRACE && postok == TOK_UNARYOP) {
@@ -749,9 +770,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           buildpt += strapp(buildpt, " ");
         }
 
-        if (pretok == TOK_OBRACE) {
-          nests++;
-        } else if (postok == TOK_CBRACE) {
+        if (postok == TOK_CBRACE) {
           nests--;
         }
       }
@@ -768,44 +787,43 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           memcpy(lineout.d.ch, &laccum.d.ch[fr], to - fr);
           lineout.d.ch[to - fr] = '\0';
           int nlen = to - fr;
-          int force_split = i > 0 ? split_ratings.d.in[i - 1] < 0 : 0;
+          int comment_split =
+              i > 0 ? split_ratings.d.in[i - 1] == SSCORE_COMMENT : 0;
 
           /* The previous location provides the break-off score */
-          int bscore = 0, bk = -1;
+          int best_score = -1000000, bk = -1;
           for (int rleft = length_left, k = i; k < nsplits && rleft >= 0; k++) {
-            /* Estimate segment length */
+            /* Estimate segment length, walk further */
             int fr = k > 0 ? splitpoints.d.in[k - 1] : 0;
-            int ofr = k > 1 ? splitpoints.d.in[k - 2] : 0;
+            //            int ofr = k > 1 ? splitpoints.d.in[k - 2] : 0;
             int to = k >= nsplits - 1 ? eoff : splitpoints.d.in[k];
-            int len = to - fr;
-            int isc = 100;
-            /* Just by previous. Q: split tok? or 'saved length' field, w/
-             * comments counting as -inf ls. Issue: what if there's less than N
-             * fields left ?*/
-            if (laccum.d.ch[ofr] == ',') {
-              isc = rleft - len - 15;
-            } else if (laccum.d.ch[ofr] == ':') {
-              isc = rleft - len - 15;
-            } else {
-              isc = rleft - len;
-            }
-            rleft -= len;
-            if (isc < bscore) {
-              bscore = isc;
+            int seglen = to - fr;
+            rleft -= seglen;
+
+            /* We split at the zone with the highest score */
+            int reduced_nestings = split_nestings.d.in[k - 1];
+            if (reduced_nestings > 0)
+              reduced_nestings--;
+            int split_score = k > 0 ? (split_ratings.d.in[k - 1] +
+                                       SSCORE_NESTING * reduced_nestings)
+                                    : 0;
+            if (split_score >= best_score) {
+              best_score = split_score;
               bk = k;
             }
+
             /* Never hold up a terminator */
             if (rleft >= 0 && k == nsplits - 1) {
               bk = -1;
             }
           }
-          int want_split = bk == i;
-          int length_split = nlen >= length_left;
+          int want_split = (bk == i);
+          int length_split = (nlen >= length_left);
 
           int continuing = 1;
           if (i == 0) {
             continuing = 1;
-          } else if (force_split || length_split || want_split) {
+          } else if (comment_split || length_split || want_split) {
             continuing = 0;
           } else {
             continuing = 1;
@@ -821,7 +839,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
               prn = &lineout.d.ch[1];
               nlen -= 1;
             }
-            if (force_split || split_nestings.d.in[i - 1] > 0) {
+            if (comment_split || split_nestings.d.in[i - 1] > 0) {
               formfilelen = vlbuf_append(formfile, "\n    ", formfilelen, out);
             } else {
               formfilelen =

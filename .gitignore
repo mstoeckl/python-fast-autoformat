@@ -5,4 +5,13 @@ MANIFEST
 build
 dist
 pfa/pfa
+pfai
+pfa/pfai
 *.o
+*.files
+*.includes
+*.creator
+*.config
+*.user
+*.directory
+TODO
