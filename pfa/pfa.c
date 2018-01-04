@@ -331,7 +331,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
 
     /* token-split the line with NULL characters; double NULL is eof */
 
-    /* STATE MACHINE TOKENIZE */
+    /* Tokenizer state machine */
     char *cur = linebuf.d.ch;
     /* space char gives room for termination checks */
     if (llen > 0)
@@ -381,7 +381,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
     int nstrescps = 0;
     int nstrleads = 0;
     for (; cur[0]; cur++) {
-      /* STATE MACHINE GOES HERE */
+      /* main tokenizing loop */
       if (cur[0] == '\t') {
         cur[0] = ' ';
       }
@@ -389,7 +389,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
       if (!inside_string && cur[0] == ' ' && cur[1] == ' ') {
         continue;
       }
-      /* SO: single space is a token boundary ... */
+      /* single space is a token boundary ... */
       char nxt = *cur;
       int ignore = 0;
       int tokfin = 0;
@@ -647,22 +647,28 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
 
       /* Line wrapping & printing, oh joy */
       char *tokpos = tokbuf.d.ch;
+      char *ntokpos = tokpos;
       int nests = 0;
       int pptok = TOK_INBETWEEN;
       int pretok = TOK_INBETWEEN;
       int postok = toks.d.in[0];
       for (int i = 0; i < ntoks; i++) {
+        ntokpos += strlen(ntokpos) + 1;
+        while (toks.d.in[i + 1] == TOK_LCONT && i < ntoks) {
+          ntokpos += strlen(ntokpos) + 1;
+          i++;
+        }
+
         pptok = pretok;
         pretok = postok;
         postok = toks.d.in[i + 1];
-        int toklen = strlen(tokpos);
+
         if (pretok == TOK_OBRACE) {
           nests++;
         }
 
-        if (pretok == TOK_LCONT) {
-          /* ignore line breaks */
-        } else if (pretok == TOK_COMMENT) {
+        if (pretok == TOK_COMMENT) {
+          int toklen = strlen(tokpos);
           char *eos = tokpos + toklen - 1;
           char *sos = tokpos;
           while (*sos == ' ') {
@@ -678,13 +684,9 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             buildpt += strapp(buildpt, "# ");
           }
           buildpt += strapp(buildpt, sos);
-          splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
           split_ratings.d.in[nsplits] = SSCORE_COMMENT;
-          split_nestings.d.in[nsplits] = nests;
-          nsplits++;
         } else {
           buildpt += strapp(buildpt, tokpos);
-          splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
           if (pretok == TOK_COMMA && postok != TOK_CBRACE && nests > 0) {
             split_ratings.d.in[nsplits] = 1;
           } else if (pretok == TOK_COLON && postok != TOK_CBRACE) {
@@ -696,11 +698,11 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           } else {
             split_ratings.d.in[nsplits] = 0;
           }
-
-          split_nestings.d.in[nsplits] = nests;
-          nsplits++;
         }
-        tokpos += toklen + 1;
+        splitpoints.d.in[nsplits] = buildpt - laccum.d.ch;
+        split_nestings.d.in[nsplits] = nests;
+        nsplits++;
+        tokpos = ntokpos;
 
         int space;
         if (pretok == TOK_COMMENT) {
@@ -708,8 +710,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         } else if (pptok == TOK_INBETWEEN && pretok == TOK_OPERATOR &&
                    postok == TOK_LABEL) {
           /* annotation */
-          space = 0;
-        } else if (pretok == TOK_LCONT) {
           space = 0;
         } else if (pretok == TOK_EQUAL || postok == TOK_EQUAL) {
           space = (nests == 0);
@@ -795,7 +795,6 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
           for (int rleft = length_left, k = i; k < nsplits && rleft >= 0; k++) {
             /* Estimate segment length, walk further */
             int fr = k > 0 ? splitpoints.d.in[k - 1] : 0;
-            //            int ofr = k > 1 ? splitpoints.d.in[k - 2] : 0;
             int to = k >= nsplits - 1 ? eoff : splitpoints.d.in[k];
             int seglen = to - fr;
             rleft -= seglen;
