@@ -161,7 +161,7 @@ static const char *ls_to_string(int ls) {
 }
 
 static int isalpha_lead(char c) {
-  if (c > 127)
+  if ((unsigned int)c > 127)
     return 1;
   if ('a' <= c && c <= 'z')
     return 1;
