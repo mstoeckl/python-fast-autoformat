@@ -12,7 +12,7 @@ class build_and_make_exec(build):
         comp.link_executable(['pfa/pfa.o'], 'pfa/pfai')
         build.run(self)
 
-setup(name='pfa', packages=['pfa',], version='0.1',
+setup(name='pfa', packages=['pfa',], version='0.2',
 
     author = "M Stoeckl",
     author_email = "mstoeckl@u.rochester.edu",
@@ -21,7 +21,7 @@ setup(name='pfa', packages=['pfa',], version='0.1',
 
     description = "Very fast and consistent (if ugly) autoformatting for Python",
     url = "https://github.com/mstoeckl/python-fast-autoformat",
-    download_url = "https://github.com/mstoeckl/python-fast-autoformat/archive/0.1.tar.gz",
+    download_url = "https://github.com/mstoeckl/python-fast-autoformat/archive/0.2.tar.gz",
 
     long_description = open("README.md").read(),
 
