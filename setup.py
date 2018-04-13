@@ -2,6 +2,8 @@
 from distutils.core import setup, Extension
 from distutils.command.build import build
 
+VERSION='0.3'
+
 class build_and_make_exec(build):
     def run(self):
         from distutils.ccompiler import new_compiler
@@ -12,7 +14,7 @@ class build_and_make_exec(build):
         comp.link_executable(['pfa/pfa.o'], 'pfa/pfai')
         build.run(self)
 
-setup(name='pfa', packages=['pfa',], version='0.2',
+setup(name='pfa', packages=['pfa',], version=VERSION,
 
     author = "M Stoeckl",
     author_email = "mstoeckl@u.rochester.edu",
@@ -21,7 +23,7 @@ setup(name='pfa', packages=['pfa',], version='0.2',
 
     description = "Very fast and consistent (if ugly) autoformatting for Python",
     url = "https://github.com/mstoeckl/python-fast-autoformat",
-    download_url = "https://github.com/mstoeckl/python-fast-autoformat/archive/0.2.tar.gz",
+    download_url = "https://github.com/mstoeckl/python-fast-autoformat/archive/"+VERSION+".tar.gz",
 
     long_description = open("README.md").read(),
 
