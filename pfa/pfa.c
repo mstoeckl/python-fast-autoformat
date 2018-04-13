@@ -269,39 +269,44 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
   char string_starter = '\0';
   int line_state = LINE_IS_NORMAL;
   int leading_spaces = 0;
-  int neof = 0;
   int nestings = 0;
   int netlen = 0;
   int origfilelen = 0;
   int formfilelen = 0;
+  int no_more_lines = 0;
   while (1) {
-    char *readct;
     int llen = 0;
-    while (1) {
-      readct = fgets(&linebuf.d.ch[llen], linebuf.len - 3 - llen, file);
-      if (!readct)
-        break;
-      int rlen = strlen(readct);
-      if (origfile) {
-        if (origfile->len < rlen + origfilelen)
-          vlbuf_expand(origfile, rlen + origfilelen);
-        memcpy(&origfile->d.ch[origfilelen], &linebuf.d.ch[llen], rlen + 1);
-        origfilelen += rlen;
-      }
-      llen += rlen;
-      if (linebuf.d.ch[llen - 1] != '\n') {
-        vlbuf_expand(&linebuf, llen + 3);
-      } else {
-        break;
-      }
-    }
+    {
+      char *readct;
+      while (1) {
+        readct = fgets(&linebuf.d.ch[llen], linebuf.len - 3 - llen, file);
+        if (!readct)
+          break;
+        int rlen = strlen(readct);
+        if (feof(file) && readct[rlen - 1] != '\n') {
+          /* if file ends, preserve line invariants by adding newline */
+          readct[rlen] = '\n';
+          readct[rlen + 1] = '\0';
+          rlen++;
+          no_more_lines = 1;
+        }
+        if (origfile) {
+          if (origfile->len < rlen + origfilelen)
+            vlbuf_expand(origfile, rlen + origfilelen);
+          memcpy(&origfile->d.ch[origfilelen], &linebuf.d.ch[llen], rlen + 1);
+          origfilelen += rlen;
+        }
+        llen += rlen;
 
-    if (!readct) {
-      if ((line_state == LINE_IS_NORMAL || line_state == LINE_IS_BLANK) ||
-          neof) {
+        if (linebuf.d.ch[llen - 1] != '\n') {
+          vlbuf_expand(&linebuf, llen + 3);
+        } else {
+          break;
+        }
+      }
+
+      if (!readct) {
         break;
-      } else {
-        neof = 1;
       }
     }
 
@@ -505,6 +510,8 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
         } else if (lopchar == '*' && nxt == '*') {
           proctok = TOK_EXP;
         } else if (lopchar == '/' && nxt == '/') {
+        } else if (lopchar == '>' && nxt == '>') {
+        } else if (lopchar == '<' && nxt == '<') {
         } else if (nxt == '=') {
           if (proctok == TOK_EXP) {
             proctok = TOK_OPERATOR;
@@ -624,7 +631,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
 
     if (line_state == LINE_IS_BLANK && !dumprest) {
       formfilelen = vlbuf_append(formfile, "\n", formfilelen, out);
-    } else if (line_state == LINE_IS_NORMAL || neof || dumprest) {
+    } else if (line_state == LINE_IS_NORMAL || no_more_lines || dumprest) {
       /* Introduce spaces to list */
 
       /* split ratings 0 is regular; -1 is force/cmt; 1 is weak */
