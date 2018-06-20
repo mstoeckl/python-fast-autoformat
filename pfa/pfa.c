@@ -685,7 +685,7 @@ static void pyformat(FILE *file, FILE *out, struct vlbuf *origfile,
             *eos = '\0';
             eos--;
           }
-          if (sos[0] == '!') {
+          if (sos[0] == '!' || sos > eos) {
             buildpt += strapp(buildpt, "#");
           } else {
             buildpt += strapp(buildpt, "# ");
