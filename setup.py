@@ -2,7 +2,7 @@
 from distutils.core import setup, Extension
 from distutils.command.build import build
 
-VERSION='0.3'
+VERSION='0.4'
 
 class build_and_make_exec(build):
     def run(self):
